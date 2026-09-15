@@ -1,5 +1,5 @@
 {
-  "name": "riff-prompter",
+  "name": "offscript",
   "version": "1.0.0",
   "private": true,
   "main": "server.js",

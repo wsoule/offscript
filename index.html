@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Riff Prompter</title>
+<title>Offscript</title>
 <style>
   :root {
     --bg: #0b0b0d; --fg: #f2f2f2; --dim: #5a5a63; --accent: #ffd166; --dir: #6aa9ff;
@@ -56,7 +56,7 @@
 <body>
 
 <div id="editor">
-  <h1>Riff Prompter</h1>
+  <h1>Offscript</h1>
   <p class="hint">
     Paste your script. It follows your voice, waits while you riff, and catches up when you get back on script — even if you skip a few words.
     Anything in <code>[square brackets]</code> is shown as a stage direction and is never expected to be spoken.
@@ -93,9 +93,9 @@ Today I want to talk about..."></textarea>
   if (!SR) { $('unsupported').style.display = 'inline'; $('start').disabled = true; }
 
   // ---- persistence of the script text ----
-  try { $('script').value = localStorage.getItem('riff.script') || ''; } catch (e) {}
-  $('script').addEventListener('input', () => { try { localStorage.setItem('riff.script', $('script').value); } catch (e) {} });
-  $('clear').onclick = () => { $('script').value = ''; try { localStorage.removeItem('riff.script'); } catch (e) {} };
+  try { $('script').value = localStorage.getItem('offscript.script') || ''; } catch (e) {}
+  $('script').addEventListener('input', () => { try { localStorage.setItem('offscript.script', $('script').value); } catch (e) {} });
+  $('clear').onclick = () => { $('script').value = ''; try { localStorage.removeItem('offscript.script'); } catch (e) {} };
 
   // ---- prompter state ----
   let words = [];      // [{norm, el}] matchable script words in order

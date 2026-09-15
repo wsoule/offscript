@@ -1,8 +1,8 @@
-# Riff Prompter
+# Offscript
 
 A voice-tracking teleprompter that lets you go off script.
 
-Live: https://riff-prompter-production.up.railway.app
+Live: https://offscript.up.railway.app
 
 ## What it does
 
