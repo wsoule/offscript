@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riff Prompter</title>
+<style>
+  :root {
+    --bg: #0b0b0d; --fg: #f2f2f2; --dim: #5a5a63; --accent: #ffd166; --dir: #6aa9ff;
+    --panel: #16161a; --border: #2a2a31;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  /* ---------- editor view ---------- */
+  #editor { max-width: 860px; margin: 0 auto; padding: 32px 20px; display: flex; flex-direction: column; gap: 14px; min-height: 100%; }
+  #editor h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  #editor p.hint { margin: 0; color: #9a9aa5; font-size: 14px; line-height: 1.5; }
+  #editor p.hint code { background: var(--panel); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; color: var(--dir); }
+  textarea { flex: 1; min-height: 50vh; width: 100%; resize: vertical; background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 10px; padding: 16px; font-size: 16px; line-height: 1.6; font-family: inherit; outline: none; }
+  textarea:focus { border-color: #444; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button { background: var(--accent); color: #111; border: 0; border-radius: 8px; padding: 12px 20px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: var(--panel); color: var(--fg); border: 1px solid var(--border); }
+  button:disabled { opacity: .5; cursor: default; }
+  #unsupported { display: none; color: #ff8a80; font-size: 14px; }
+
+  /* ---------- prompter view ---------- */
+  #prompter { display: none; position: fixed; inset: 0; overflow: hidden; }
+  #prompter.on { display: block; }
+  #scroll { position: absolute; inset: 0; overflow-y: auto; padding: 45vh 8vw; scroll-behavior: smooth; }
+  #scroll.mirror { transform: scaleX(-1); }
+  #text { font-size: var(--size, 56px); line-height: 1.45; font-weight: 500; letter-spacing: -0.01em; }
+  #text .w { color: var(--dim); transition: color .15s; }
+  #text .w.read { color: var(--fg); }
+  #text .w.cur { color: var(--accent); }
+  #text .w.next { color: var(--fg); }
+  #text .d { color: var(--dir); font-style: italic; font-weight: 400; opacity: .85; }
+  #text .p { display: block; height: .7em; }
+  #line { position: absolute; left: 0; right: 0; top: 50%; height: 0; border-top: 2px solid rgba(255,209,102,.25); pointer-events: none; }
+
+  #hud { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    font-size: 13px; opacity: .35; transition: opacity .2s; }
+  #hud:hover, #prompter.showhud #hud { opacity: 1; }
+  #hud .pill { background: rgba(22,22,26,.9); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; display: flex; gap: 8px; align-items: center; }
+  #hud button { padding: 6px 12px; font-size: 13px; }
+  #mic { width: 9px; height: 9px; border-radius: 50%; background: #666; }
+  #mic.live { background: #34d399; box-shadow: 0 0 8px #34d399; }
+  #heard { color: #9a9aa5; max-width: 40vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #hud input[type=range] { width: 120px; }
+  #keys { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #6a6a73; opacity: .5; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div id="editor">
+  <h1>Riff Prompter</h1>
+  <p class="hint">
+    Paste your script. It follows your voice, waits while you riff, and catches up when you get back on script — even if you skip a few words.
+    Anything in <code>[square brackets]</code> is shown as a stage direction and is never expected to be spoken.
+  </p>
+  <textarea id="script" placeholder="Hey everyone, welcome back. [smile, wait a beat]
+
+Today I want to talk about..."></textarea>
+  <div class="row">
+    <button id="start">Start prompter</button>
+    <button id="clear" class="secondary">Clear</button>
+    <span id="unsupported">Your browser doesn't support speech recognition. Use Chrome, Edge, or Safari.</span>
+  </div>
+</div>
+
+<div id="prompter">
+  <div id="scroll"><div id="text"></div></div>
+  <div id="line"></div>
+  <div id="hud">
+    <div class="pill"><span id="mic"></span><span id="micLabel">mic off</span></div>
+    <div class="pill" id="heard">…</div>
+    <div class="pill">A <input type="range" id="size" min="28" max="110" value="56"></div>
+    <button id="mirror" class="secondary">Mirror</button>
+    <button id="restart" class="secondary">Restart</button>
+    <button id="exit" class="secondary">Edit script</button>
+  </div>
+  <div id="keys">space: mic on/off · ← → nudge · esc: edit</div>
+</div>
+
+<script src="matcher.js"></script>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { $('unsupported').style.display = 'inline'; $('start').disabled = true; }
+
+  // ---- persistence of the script text ----
+  try { $('script').value = localStorage.getItem('riff.script') || ''; } catch (e) {}
+  $('script').addEventListener('input', () => { try { localStorage.setItem('riff.script', $('script').value); } catch (e) {} });
+  $('clear').onclick = () => { $('script').value = ''; try { localStorage.removeItem('riff.script'); } catch (e) {} };
+
+  // ---- prompter state ----
+  let words = [];      // [{norm, el}] matchable script words in order
+  let pos = 0;         // index of next word we expect to hear
+  let spoken = [];     // rolling buffer of normalized words that were finalized
+  let rec = null;
+  let listening = false;
+  let hudTimer = null;
+
+  function render(script) {
+    const text = $('text');
+    text.innerHTML = '';
+    words = [];
+    for (const t of Matcher.tokenize(script)) {
+      if (t.type === 'break') {
+        if (t.count >= 2) { const p = document.createElement('span'); p.className = 'p'; text.appendChild(p); }
+        else text.appendChild(document.createElement('br'));
+        continue;
+      }
+      const el = document.createElement('span');
+      el.textContent = t.text;
+      if (t.type === 'direction') el.className = 'd';
+      else {
+        el.className = 'w';
+        if (t.norm) words.push({ norm: t.norm, el });
+      }
+      text.appendChild(el);
+      text.appendChild(document.createTextNode(' '));
+    }
+  }
+
+  function setPos(p) {
+    pos = Math.max(0, Math.min(words.length, p));
+    words.forEach((w, i) => {
+      w.el.classList.toggle('read', i < pos);
+      w.el.classList.toggle('cur', i === pos);
+      w.el.classList.toggle('next', i > pos && i < pos + 12);
+    });
+    const cur = words[pos] || words[words.length - 1];
+    if (cur) {
+      const sc = $('scroll');
+      const r = cur.el.getBoundingClientRect();
+      sc.scrollTop += r.top + r.height / 2 - sc.clientHeight / 2;
+    }
+  }
+
+  const normWords = s => s.trim().split(/\s+/).map(Matcher.normalize).filter(Boolean);
+
+  function handleTranscript(finalText, interimText) {
+    if (finalText) spoken = spoken.concat(normWords(finalText)).slice(-12);
+    const heard = spoken.concat(normWords(interimText)).slice(-8);
+    if (!heard.length) return;
+    $('heard').textContent = heard.join(' ');
+    const next = Matcher.findAdvance(heard, words.map(w => w.norm), pos, 10, 2);
+    if (next != null && next > pos) setPos(next);
+  }
+
+  // ---- speech recognition ----
+  function startRec() {
+    if (!SR) return;
+    rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+    rec.onresult = e => {
+      let fin = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) fin += ' ' + r[0].transcript;
+        else interim += ' ' + r[0].transcript;
+      }
+      handleTranscript(fin, interim);
+    };
+    rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { setListening(false); $('micLabel').textContent = 'mic blocked'; }
+    };
+    // Browsers end the session after silence / ~60s; restart while we're supposed to be listening.
+    rec.onend = () => { if (listening) { try { rec.start(); } catch (e) { setTimeout(startRec, 300); } } };
+    try { rec.start(); } catch (e) {}
+  }
+  function stopRec() { if (rec) { const r = rec; rec = null; r.onend = null; try { r.stop(); } catch (e) {} } }
+  function setListening(on) {
+    listening = on;
+    $('mic').classList.toggle('live', on);
+    $('micLabel').textContent = on ? 'listening' : 'mic off';
+    if (on) startRec(); else stopRec();
+  }
+
+  // ---- view switching ----
+  function openPrompter() {
+    render($('script').value);
+    spoken = [];
+    $('editor').style.display = 'none';
+    $('prompter').classList.add('on');
+    setPos(0);
+    setListening(true);
+    flashHud();
+  }
+  function closePrompter() {
+    setListening(false);
+    $('prompter').classList.remove('on');
+    $('editor').style.display = 'flex';
+  }
+  function flashHud() {
+    $('prompter').classList.add('showhud');
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => $('prompter').classList.remove('showhud'), 2500);
+  }
+
+  $('start').onclick = openPrompter;
+  $('exit').onclick = closePrompter;
+  $('restart').onclick = () => { spoken = []; setPos(0); };
+  $('mirror').onclick = () => $('scroll').classList.toggle('mirror');
+  $('size').oninput = e => { document.documentElement.style.setProperty('--size', e.target.value + 'px'); setPos(pos); };
+  $('prompter').addEventListener('mousemove', flashHud);
+
+  document.addEventListener('keydown', e => {
+    if (!$('prompter').classList.contains('on')) return;
+    if (e.key === 'Escape') closePrompter();
+    else if (e.key === ' ') { e.preventDefault(); setListening(!listening); flashHud(); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setPos(pos + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setPos(pos - 1); }
+  });
+})();
+</script>
+</body>
+</html>
